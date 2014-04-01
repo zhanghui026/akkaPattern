@@ -11,6 +11,8 @@ import adcc.zeus.redis.Redis._
 
 class SingleRedis(pool: JedisPool) extends Redis {
 
+
+
   def this(host: String, port: Int, pwd: Option[String] = None, timeout: Int = 3600000, poolSize: Int = 60) = this(pool(config(poolSize), host, port, pwd, timeout))
 
   def ping() = this.run(redis => {redis.ping()})
@@ -220,6 +222,8 @@ class SingleRedis(pool: JedisPool) extends Redis {
       responses
     })
   }
+
+  def ktype(key: String): String = this.run(redis => {redis.`type`(key)})
 
   def shutdown = pool.destroy()
 }

@@ -1,6 +1,6 @@
-import monitor2.ZeusRedisCenter
+import monitor2.ZeusRedisMetricCenter
 
-ZeusRedisCenter.gainSystemStartTime()
+ZeusRedisMetricCenter.gainSystemStartTime()
 
 
 

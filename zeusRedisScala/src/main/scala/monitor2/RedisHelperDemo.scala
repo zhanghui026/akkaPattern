@@ -10,11 +10,11 @@ import adcc.zeus.redis.RedisHelper
  * @version $Id: 2014/3/19 13:28 
  */
 object RedisHelperDemo extends App {
-//  val redisHelper = RedisHelper("192.168.243.217")
-  val redisHelper = RedisHelper("192.168.253.128")
+  val redisHelper = RedisHelper("192.168.243.217")
+//  val redisHelper = RedisHelper("192.168.253.128")
   def doAppendBoundListExp(){
     redisHelper.clearBoundedList("stack")
-    val res = redisHelper.gainListValues("stack",4)
+    val res = redisHelper.lrangeFromZero("stack",4)
     println(res)
 
     val r1 = System.currentTimeMillis()
@@ -28,9 +28,9 @@ object RedisHelperDemo extends App {
     }
     Future.sequence(con)
     Thread.sleep(30000)
-    val length = redisHelper.gainBoundedListLength("stack")
+    val length = redisHelper.llength("stack")
     println("这个队列的长度是"+length)
-    redisHelper.gainListValues("stack",10) foreach println
+    redisHelper.lrangeFromZero("stack",10) foreach println
   }
 
   def gainTop10Max() {
@@ -48,11 +48,11 @@ object RedisHelperDemo extends App {
     }
     Future.sequence(connFuture).map(queue => queue.sortBy(e => e._2).reverse.take(10)).foreach(println(_))
     Thread.sleep(30000)
-    redisHelper.gainSortedSet("top10").foreach {
+    redisHelper.zrangeWithScores("top10").foreach {
       value =>
         println(value)
     }
-    println(redisHelper.gainSortedSet("top10").size)
+    println(redisHelper.zrangeWithScores("top10").size)
     redisHelper.clearBoundedList("top10")
   }
 
@@ -71,11 +71,11 @@ object RedisHelperDemo extends App {
     }
     Future.sequence(connFuture).map(queue => queue.sortBy(e => e._2).take(10)).foreach(println(_))
     Thread.sleep(30000)
-    redisHelper.gainSortedSet("top10Min").foreach {
+    redisHelper.zrangeWithScores("top10Min").foreach {
       value =>
         println(value)
     }
-    println(redisHelper.gainSortedSet("top10Min").size)
+    println(redisHelper.zrangeWithScores("top10Min").size)
 
     redisHelper.clearBoundedList("top10Min")
   }

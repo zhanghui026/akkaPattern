@@ -2,7 +2,7 @@ name := """akkaPattern"""
 
 version := "1.0"
 
-scalaVersion := "2.10.3"
+scalaVersion := "2.10.4"
 
 libraryDependencies ++= akka
 
@@ -17,7 +17,8 @@ lazy val akka = Seq(
   "com.typesafe" % "config" % "1.2.0",
    "org.mockito" % "mockito-all" % "1.9.5" % "test",
   "com.typesafe.akka" %% "akka-testkit" % "2.3.0" % "test",
-  "redis.clients" % "jedis" % "2.1.0"
+  "redis.clients" % "jedis" % "2.1.0",
+   "commons-codec" % "commons-codec" % "1.9"
 )
 
 lazy val redis = Seq (

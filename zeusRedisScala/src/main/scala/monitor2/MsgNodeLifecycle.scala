@@ -26,11 +26,11 @@ trait MsgNodeLifecycle {
   //最后一条msg结束时间
   def recordLastMsgOutTime(nodename:String,lastTime:Long)
   //记录报文进入结点的时间
-  def recordMsgInTime(msgMd5:String,inTime:Long)
-  //将报文处理时间记录在一个bounded队列中
-  def recordNMsgThroughTime(msgMd5: String, outTime: Long,inTime:Long,number:Long): Unit
-
-  def recordTopNMsgThroughTimeMax(msgMd5:String,msg:String,outTime:Long,inTime:Long,topN:Long):Unit
+//  def recordMsgInTime(msgMd5:String,inTime:Long)
+//  //将报文处理时间记录在一个bounded队列中
+//  def recordNMsgThroughTime(msgMd5: String, outTime: Long,inTime:Long,number:Long): Unit
+//
+//  def recordTopNMsgThroughTimeMax(msgMd5:String,msg:String,outTime:Long,inTime:Long,topN:Int):Unit
 
 }
 
@@ -40,13 +40,14 @@ class MsgNodeLifecycleToRedis(nodeName:String,val redisHelper:RedisHelper) exten
 
 
 
-  import ZeusMetricKey._
   //标识名字，当结点运行了
   /**
-   *  "sysnodes:[values]"
+   *  在zeus:runningNodes里记录运行结点
+   *  zeus:allNodes里记录结点
    */
   override def recordNodeName(node:String = nodeName): Unit = {
-    redisHelper.appendToSet("zeus:nodes",node)
+    redisHelper.sadd("zeus:runningNodes",node)
+    redisHelper.sadd("zeus:allNodes",node)
   }
 
   /**
@@ -65,68 +66,141 @@ class MsgNodeLifecycleToRedis(nodeName:String,val redisHelper:RedisHelper) exten
 
   //结点结束运行，删除结点名字，结点结束时间
   override def recordStopTime(node: String = nodeName, stopTime: Long): Unit = {
-    redisHelper.saveLong(gainNodeKeyForTime(node),"stopTime",stopTime)
+    redisHelper.hsetNX(gainNodeStartTimeListKey(node),"stopTime",stopTime)
   }
 
   //结点开始运行，记录结点名字，结点开始时间，结点开始时间为时间戳返回
   override def recordStartTime(node: String = nodeName, startTime: Long): Unit = {
     //记录结点的启动时间
-    redisHelper.saveLong(gainNodeKeyForStartTime(node,startTime),"startTime",startTime)
+    val nodeKey =  gainNodeStartTimeListKeyMayNoStart(node,startTime)
+    //在此key list中加入开启时间列表中
+    redisHelper.rpush(nodeKey,startTime)
+    redisHelper.hset(s"node:[$node]","startTime",startTime.toString)
   }
 
-  def gainNodeKeyForStartTime(node:String = nodeName,startTime:Long) = {
+  def gainNodeStartTimeListKeyMayNoStart(node:String = nodeName,startTime:Long) = {
      //获取系统是否是没有结点，没有结点用startTime作为参数，否则用系统的开始时间做参数
-    val sysStartTime = redisHelper.gainValue("zeus:sys","startTime").getOrElse(startTime.toString)
-     s"node:[$node]:sys:[$sysStartTime]"
+    val sysStartTime = redisHelper.hget("zeus:sys","startTime").getOrElse(startTime.toString)
+     s"node:[$node]:sys:[$sysStartTime]:sTimeList"
   }
 
-  def gainNodeKeyForEndTime(node:String = nodeName) = {
-    val sysStartTime = redisHelper.gainValue("zeus:sys","startTime")
+
+
+  def gainNodeStartTimeListKey(node:String = nodeName) = {
+    val sysStartTime = redisHelper.hget("zeus:sys","startTime")
+    val startTime = redisHelper.hget(s"node:[$node]","startTime")
     if (sysStartTime.isDefined){
-      s"node:[$node]:sys:[$sysStartTime]"
+      s"node:[$node]:sys:[${sysStartTime.get}]:stime:[${startTime.get.toString}]"
     }else{
       throw new IllegalArgumentException("错误逻辑，没有获得ZeusSys的启动时间，请重试")
     }
-
   }
+
+
   //最后一条msg结束时间
   override def recordLastMsgOutTime(node: String = nodeName, lastTime: Long): Unit = {
-    redisHelper.saveLong(gainNodeKeyForEndTime(node),"lastMsgOutTime",lastTime)
+    redisHelper.hsetNX(gainNodeStartTimeListKey(node),"lastMsgOutTime",lastTime)
+  }
+
+  /**
+   * 判断是否有第一条消息进入了
+   * @param node
+   *
+   * @return
+   */
+  def hasFirstMsgInTime(node: String = nodeName):Boolean = {
+    redisHelper.hexists(s"node:[$node]","firstMsgInTime")
   }
 
   //第一条msg进入时间
   override def recordFirstMsgInTime(node: String = nodeName, inTime: Long): Unit = {
-    redisHelper.saveLong(s"node:[$node]","firstMsgInTime",inTime,true)
+    redisHelper.hsetNX(s"node:[$node]","firstMsgInTime",inTime,true)
   }
 
-  //记录报文在结点中处理的时间，会销毁进入时间
-  override def recordNMsgThroughTime(msgMd5: String, outTime: Long,inTime:Long,number:Long =3000): Unit = {
-    redisHelper.appendToBoundedList("throughtimeList",(outTime-inTime),number)
-  }
+
 
   def gainMsgInTime(msgMd5:String) = {
-    redisHelper.getKeyValue(s"msgInTime:md5:[$msgMd5]")
+    redisHelper.get(s"msgInTime:md5:[$msgMd5]").map {
+      t => t.toLong
+    }
   }
 
+
+
   //记录报文进入结点的时间
-  override def recordMsgInTime(msgMd5: String, inTime: Long): Unit = {
+  def recordMsgInTime(msgMd5: String, inTime: Long,node:String = nodeName): Unit = {
     redisHelper.saveKeyValue(s"msgInTime:md5:[$msgMd5]",inTime)
   }
 
-  override def recordTopNMsgThroughTimeMax(msgMd5: String, msg: String, outTime: Long, inTime: Long, topN: Long): Unit = ???
+  def gainFirstMsgInTime(node: String = nodeName) = {
+    redisHelper.hget(s"node:[$node]","firstMsgInTime") map {
+      s => s.toLong
+    }
+  }
 
+  def gainMsgIn(node: String = nodeName):BigInt = {
+    val r = redisHelper.get(s"msgInCount:node:[$node]")
+    r.map {
+      d => BigInt(d)
+    }.getOrElse(0)
+  }
+
+
+  def gainMsgOut(node: String = nodeName):BigInt = {
+    val r = redisHelper.get(s"msgOutCount:node:[$node]")
+    r.map {
+      d => BigInt(d)
+    }.getOrElse(BigInt(0))
+  }
+
+  //报文出了系统
+  def delMsgInTime(msgMd5: String) = {
+      redisHelper.del(s"msgInTime:md5:[$msgMd5]")
+  }
+
+  def recordTopNMsgThroughTimeMax(msgMd5: String, msg: String, outTime: Long, inTime: Long, topN: Int = 20,node:String = nodeName): Unit = {
+    redisHelper.appendToTopNSortedSet(s"topNMax:node:[$node]",msgMd5+":"+msg,(outTime-inTime),topN)
+  }
+
+  def gainTopNMsg(node: String = nodeName) = {
+    redisHelper.zrangeWithScores(s"topNMax:node:[$node]").map {
+      s  => {
+        val firstSep = s._1.indexOf(':')
+        (s._1.take(firstSep),s._1.drop(firstSep+1),s._2.toLong)
+      }
+    }
+  }
+
+  def recordNMsgThroughTime(outTime: Long,inTime:Long,number:Long =3000,node:String= nodeName): Unit = {
+    redisHelper.appendToBoundedList(s"throughTimeList:node:[$node]",(outTime-inTime),number)
+  }
+
+  def gainNMsgThroughTime(node: String = nodeName) = {
+    redisHelper.lrangeFromZero(s"throughTimeList:node:[$node]").map(s => s.toLong)
+  }
 
   def gainStartTime(node: String = nodeName) = {
-      redisHelper.gainValue(s"node:[$node]","startTime").map {
-        s =>
-          val times = s.toLong
-          new java.util.Date(times)
-      }
+      redisHelper.hget(s"node:[$node]","startTime") map {s => s.toLong}
   }
+
+
+
   //从当前运行结点中，删除结点名字
-  def rmRecordNodeName(node: String = nodeName) = {
-     redisHelper.removeSetValue("zeus:nodes",node)
+  def rmRunningNodeName(node: String = nodeName) = {
+     redisHelper.srem("zeus:runningNodes",node)
   }
+
+  /**
+   * 关闭结点
+   */
+  def shutDown(node:String = nodeName) = {
+     //将当前结点的开始时间去掉
+    redisHelper.hdel(s"node:[$node]","startTime")
+  }
+  def isRunning(node:String = nodeName): Boolean = {
+    redisHelper.sismember("zeus:runningNodes",node)
+  }
+
 }
 
 trait SysLifecycle {
@@ -144,68 +218,129 @@ trait SysLifecycle {
 class SysNodeLifecycle(val redisHelper:RedisHelper) extends SysLifecycle {
 
 
-  def hasNoNode: Boolean = {
-    redisHelper.gainSetSize("")
+
+  def isRunning: Boolean = {
+    redisHelper.scard("zeus:runningNodes") > 0
   }
 
 
   override def incrMsgOut(): Unit = {
-    redisHelper.incr("msgOutCount:zeus")
+    redisHelper.incr("msgOutCount")
   }
 
   override def incrMsgIn(): Unit = {
-    redisHelper.incr("msgInCount:zeus")
+    redisHelper.incr("msgInCount")
+  }
+
+
+  def gainMsgIn():BigInt = {
+    val r = redisHelper.get("msgInCount")
+    r.map {
+      d => BigInt(d)
+    }.getOrElse(BigInt(0))
+  }
+
+  def gainMsgOut():BigInt = {
+    val r = redisHelper.get("msgOutCount")
+    r.map {
+      d => BigInt(d)
+    }.getOrElse(BigInt(0))
   }
 
   override def recordStopTime(milSec:Long = System.currentTimeMillis() ): Unit = {
-    redisHelper.saveLong(s"zeus:sys","stopTime",milSec)
+    redisHelper.hsetNX(s"zeus:sys","stopTime",milSec)
   }
 
   override def recordStartTime(milSec:Long = System.currentTimeMillis()): Unit = {
-    val isFirst= redisHelper.gainValue("zeus:sys","startTime").isEmpty
+    val isFirst= redisHelper.hget("zeus:sys","startTime").isEmpty
 
-    redisHelper.saveLong("zeus:sys","startTime",milSec,true) //系统的开始时间
+    redisHelper.hsetNX("zeus:sys","startTime",milSec,true) //系统的开始时间
     if(isFirst){
-      redisHelper.appendToList("zeus:sys:startTimeList",milSec.toString)
+      redisHelper.rpush("zeus:sys:startTimeList",milSec.toString)
     }
   }
   //记录当前系统的结束时间
   def recordEndTime(milSec: Long=System.currentTimeMillis()) = {
     //记录系统的endTime
-    redisHelper.appendToList("zeus:sys:endTimeList",milSec.toString)  //将endtime记录到队列中
+    redisHelper.rpush("zeus:sys:endTimeList",milSec.toString)  //将endtime记录到队列中
     //去掉开始key的字段
-    redisHelper.removeMapField("zeus:sys","startTime")
+    redisHelper.hdel("zeus:sys","startTime")
   }
 
   //最后一条msg结束时间
   override def recordLastMsgOutTime(): Unit = {
-    redisHelper.saveLong(s"zeus:sys","lastMsgOutTime",System.currentTimeMillis())
+    redisHelper.hsetNX(s"zeus:sys","lastMsgOutTime",System.currentTimeMillis())
   }
 
+  /**
+   * 判断第一条消息是否进入
+   * @return
+   */
+  def hasFirstMsgInTime() = {
+    redisHelper.hexists("zeus:sys","firstMsgInTime")
+  }
   //第一条msg进入时间
   override def recordFirstMsgInTime(): Unit ={
-    redisHelper.saveLong(s"zeus:sys","firstMsgInTime",System.currentTimeMillis())
+    redisHelper.hsetNX("zeus:sys","firstMsgInTime",System.currentTimeMillis())
   }
 
+  def gainFirstMsgInTime() = {
+    redisHelper.hget("zeus:sys","firstMsgInTime").map {
+      s => s.toLong
+    }
+  }
+
+
   def gainStartTime() = {
-    redisHelper.gainValue("zeus:sys","startTime").map {
-      s =>
-        val times = s.toLong
-        new java.util.Date(times)
+    redisHelper.hget("zeus:sys","startTime").map {
+      s => s.toLong
+
     }
   }
 
   def gainStartTimeList() = {
-    redisHelper.gainListValues("zeus:sys:startTimeList").map{
+    redisHelper.lrangeFromZero("zeus:sys:startTimeList").map{
       s => val milSec =  s.toLong ;new java.util.Date(milSec)
     }
   }
 
   def gainRunningNodeNames(): Set[String] = {
-    redisHelper.gainSet("zeus:nodes")
+    redisHelper.smembers("zeus:runningNodes")
   }
 
-  def gainDeadRunningNodeNames(): Set[String] = {
-
+  def gainAllNodeNames(): Set[String] = {
+    redisHelper.smembers("zeus:allNodes")
   }
+
+  //记录报文在系统中处理的时间，会销毁进入时间
+  def recordNMsgThroughTime(outTime: Long,inTime:Long,number:Long =3000): Unit = {
+    redisHelper.appendToBoundedList("sys:throughTimeList",(outTime-inTime),number)
+  }
+
+  def recordTopNMsgThroughTimeMax(msgMd5: String, msg: String, outTime: Long, inTime: Long, topN: Int = 20) = {
+    redisHelper.appendToTopNSortedSet(s"topNMax:sys",msgMd5+":"+msg,(outTime-inTime),topN)
+  }
+
+  /**
+   * 获得最大的n条记录
+   * @return
+   */
+  def gainTopNMsg() = {
+    redisHelper.zrangeWithScores("topNMax:sys").map {
+      s  => {
+        val firstSep = s._1.indexOf(':')
+        (s._1.take(firstSep),s._1.drop(firstSep+1),s._2.toLong)
+      }
+    }
+  }
+
+  /**
+   * 获得n条消息的平均时间
+   * @return
+   */
+  def gainNMsgThroughTime() = {
+    redisHelper.lrangeFromZero("sys:throughTimeList").map(s => s.toLong)
+  }
+
+ 
 }

@@ -11,7 +11,7 @@ object RedisMetricDemo extends App{
   //清空所有key
   helper.keys foreach println
   helper.keys.foreach { k =>
-      helper.clearKey(k)
+      helper.del(k)
   }
 
   helper.keys foreach println
